@@ -1,0 +1,23 @@
+name: PR checks
+
+on:
+  pull_request:
+    types: [opened]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  check-pkgbuild:
+    runs-on: ubuntu-latest
+
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v3
+      - name: Create build user
+        run: |
+          useradd -m build
+          cp -vR linux /home/build/linux
+          chown -vR build /home/build/linux
+      - name: Check package checksums
+        run: |
+          su build bash -c "cd /home/build/linux && makepkg -g"
