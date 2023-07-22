@@ -100,18 +100,18 @@ index 7b177b9fbb097..835c76cc2eea9 100644
  
 +static const char *k10temp_in_label[] = {
 +	"",
-+	"SVI2_Core",
-+	"SVI2_SoC",
++	"Vcore",
++	"Vsoc",
 +};
 +
 +static const char *k10temp_curr_label[] = {
-+	"SVI2_C_Core",
-+	"SVI2_C_SoC",
++	"Icore",
++	"Isoc",
 +};
 +
 +static const char *k10temp_power_label[] = {
-+	"SVI2_P_Core",
-+	"SVI2_P_SoC",
++	"Pcore",
++	"Psoc",
 +};
 +
  static int k10temp_read_labels(struct device *dev,
