@@ -8,6 +8,7 @@ on:
 env:
   PKGDEST: "/tmp/linux-chimeraos"
   BUILDDIR: "/tmp/build"
+  MARCH: "znver1"
 
 jobs:
   build-kernel:
@@ -34,6 +35,9 @@ jobs:
           rm -rf /opt-host/hostedtoolcache
           rm -rf /opt-host/az
           df -h
+      - run: |
+          sed -i 's/-march=[^ ]* -mtune=[^ ]*/-march=${{ env.MARCH }}/' /etc/makepkg.conf
+          cat /etc/makepkg.conf
       - uses: actions/checkout@v3
       - name: Create build user
         run: |
