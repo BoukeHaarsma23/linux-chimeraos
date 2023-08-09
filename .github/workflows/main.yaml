@@ -8,6 +8,7 @@ on:
 env:
   PKGDEST: "/tmp/linux-chimeraos"
   BUILDDIR: "/tmp/build"
+  MARCH: "znver1"
 
 jobs:
   build-kernel:
@@ -34,6 +35,9 @@ jobs:
           rm -rf /opt-host/hostedtoolcache
           rm -rf /opt-host/az
           df -h
+      - run: |
+          sed -i 's/-march=[^ ]* -mtune=[^ ]*/-march=${{ env.MARCH }}/' /etc/makepkg.conf
+          cat /etc/makepkg.conf
       - uses: actions/checkout@v3
       - name: Create build user
         run: |
@@ -52,7 +56,7 @@ jobs:
         id: build-kernel-package
         shell: bash
         run: |
-          su build bash -c "cd /home/build/linux && MAKEFLAGS=-j$(nproc) makepkg"
+          su build bash -c "cd /home/build/linux && export KCFLAGS=' -march=${{ env.MARCH}}' && export KCPPFLAGS=' -march=${{ env.MARCH }}' && MAKEFLAGS=-j$(nproc) makepkg"
           . /home/build/linux/PKGBUILD
           full_version=${pkgver}-${pkgrel}
           echo "full_version=$full_version" >> "$GITHUB_OUTPUT"
