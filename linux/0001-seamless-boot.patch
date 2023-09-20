@@ -1,0 +1,345 @@
+From bfbc1919d8c4e29b2b22f0ba20cbba8beec2a0f3 Mon Sep 17 00:00:00 2001
+From: Mario Limonciello <mario.limonciello@amd.com>
+Date: Tue, 5 Sep 2023 14:25:57 -0500
+Subject: [PATCH 1/5] drm/amd: Drop special case for yellow carp without
+ discovery
+
+`amdgpu_gmc_get_vbios_allocations` has a special case for how to
+bring up yellow carp when amdgpu discovery is turned off. As this ASIC
+ships with discovery turned on, it's generally dead code and worse it
+causes `adev->mman.keep_stolen_vga_memory` to not be initialized for
+yellow carp.
+
+Remove it.
+
+Signed-off-by: Mario Limonciello <mario.limonciello@amd.com>
+Reviewed-by: Alex Deucher <alexander.deucher@amd.com>
+(cherry picked from commit 15997a81f72b1a818fd43a27cd1db996b3c6d366)
+---
+ drivers/gpu/drm/amd/amdgpu/amdgpu_gmc.c | 6 ------
+ 1 file changed, 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_gmc.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_gmc.c
+index d78bd97325434..cb194c0b1f2d6 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_gmc.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_gmc.c
+@@ -721,12 +721,6 @@ void amdgpu_gmc_get_vbios_allocations(struct amdgpu_device *adev)
+ 	case CHIP_RENOIR:
+ 		adev->mman.keep_stolen_vga_memory = true;
+ 		break;
+-	case CHIP_YELLOW_CARP:
+-		if (amdgpu_discovery == 0) {
+-			adev->mman.stolen_reserved_offset = 0x1ffb0000;
+-			adev->mman.stolen_reserved_size = 64 * PAGE_SIZE;
+-		}
+-		break;
+ 	default:
+ 		adev->mman.keep_stolen_vga_memory = false;
+ 		break;
+-- 
+2.41.0
+
+
+From f37381c37d17d30bb8dd3c2c84841c4e934c81e7 Mon Sep 17 00:00:00 2001
+From: Mario Limonciello <mario.limonciello@amd.com>
+Date: Tue, 5 Sep 2023 14:25:58 -0500
+Subject: [PATCH 2/5] drm/amd: Move seamless boot check out of display
+
+This will allow base driver to dictate whether seamless should be
+enabled.  No intended functional changes.
+
+Reviewed-by: Harry Wentland <harry.wentland@amd.com>
+Signed-off-by: Mario Limonciello <mario.limonciello@amd.com>
+(cherry picked from commit 58a90b47647aaed65aa8d532644ca7cc992b6ac6)
+---
+ drivers/gpu/drm/amd/amdgpu/amdgpu.h           |  1 +
+ drivers/gpu/drm/amd/amdgpu/amdgpu_device.c    | 21 +++++++++++++++++
+ .../gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c | 23 +------------------
+ .../gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h |  2 --
+ 4 files changed, 23 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu.h b/drivers/gpu/drm/amd/amdgpu/amdgpu.h
+index 6dc950c1b6893..15fdf30b220da 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu.h
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu.h
+@@ -1297,6 +1297,7 @@ void amdgpu_device_pci_config_reset(struct amdgpu_device *adev);
+ int amdgpu_device_pci_reset(struct amdgpu_device *adev);
+ bool amdgpu_device_need_post(struct amdgpu_device *adev);
+ bool amdgpu_sg_display_supported(struct amdgpu_device *adev);
++bool amdgpu_device_seamless_boot_supported(struct amdgpu_device *adev);
+ bool amdgpu_device_pcie_dynamic_switching_supported(void);
+ bool amdgpu_device_should_use_aspm(struct amdgpu_device *adev);
+ bool amdgpu_device_aspm_support_quirk(void);
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+index 6e5e4603a51a1..2f83d7d420b12 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+@@ -1487,6 +1487,27 @@ bool amdgpu_sg_display_supported(struct amdgpu_device *adev)
+ 	return true;
+ }
+ 
++/*
++ * Check whether seamless boot is supported.
++ *
++ * So far we only support seamless boot on select ASICs.
++ * If everything goes well, we may consider expanding
++ * seamless boot to other ASICs.
++ */
++bool amdgpu_device_seamless_boot_supported(struct amdgpu_device *adev)
++{
++	switch (adev->ip_versions[DCE_HWIP][0]) {
++	case IP_VERSION(3, 0, 1):
++		if (!adev->mman.keep_stolen_vga_memory)
++			return true;
++		break;
++	default:
++		break;
++	}
++
++	return false;
++}
++
+ /*
+  * Intel hosts such as Raptor Lake and Sapphire Rapids don't support dynamic
+  * speed switching. Until we have confirmation from Intel that a specific host
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+index 3123ea2f4f30a..cb00342f5dd11 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.c
+@@ -1663,7 +1663,7 @@ static int amdgpu_dm_init(struct amdgpu_device *adev)
+ 
+ 	init_data.flags.seamless_boot_edp_requested = false;
+ 
+-	if (check_seamless_boot_capability(adev)) {
++	if (amdgpu_device_seamless_boot_supported(adev)) {
+ 		init_data.flags.seamless_boot_edp_requested = true;
+ 		init_data.flags.allow_seamless_boot_optimization = true;
+ 		DRM_INFO("Seamless boot condition check passed\n");
+@@ -10807,27 +10807,6 @@ int amdgpu_dm_process_dmub_set_config_sync(
+ 	return ret;
+ }
+ 
+-/*
+- * Check whether seamless boot is supported.
+- *
+- * So far we only support seamless boot on CHIP_VANGOGH.
+- * If everything goes well, we may consider expanding
+- * seamless boot to other ASICs.
+- */
+-bool check_seamless_boot_capability(struct amdgpu_device *adev)
+-{
+-	switch (adev->ip_versions[DCE_HWIP][0]) {
+-	case IP_VERSION(3, 0, 1):
+-		if (!adev->mman.keep_stolen_vga_memory)
+-			return true;
+-		break;
+-	default:
+-		break;
+-	}
+-
+-	return false;
+-}
+-
+ bool dm_execute_dmub_cmd(const struct dc_context *ctx, union dmub_rb_cmd *cmd, enum dm_dmub_wait_type wait_type)
+ {
+ 	return dc_dmub_srv_cmd_run(ctx->dmub_srv, cmd, wait_type);
+diff --git a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
+index 9fb5bb3a75a77..d65798d4ce9a0 100644
+--- a/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
++++ b/drivers/gpu/drm/amd/display/amdgpu_dm/amdgpu_dm.h
+@@ -811,8 +811,6 @@ int amdgpu_dm_process_dmub_aux_transfer_sync(struct dc_context *ctx, unsigned in
+ int amdgpu_dm_process_dmub_set_config_sync(struct dc_context *ctx, unsigned int link_index,
+ 					struct set_config_cmd_payload *payload, enum set_config_status *operation_result);
+ 
+-bool check_seamless_boot_capability(struct amdgpu_device *adev);
+-
+ struct dc_stream_state *
+ 	create_validate_stream_for_sink(struct amdgpu_dm_connector *aconnector,
+ 					const struct drm_display_mode *drm_mode,
+-- 
+2.41.0
+
+
+From 740d27f5c25202d23e58dfc7a90df04e43398b9c Mon Sep 17 00:00:00 2001
+From: Mario Limonciello <mario.limonciello@amd.com>
+Date: Tue, 5 Sep 2023 14:25:59 -0500
+Subject: [PATCH 3/5] drm/amd: Add a module parameter for seamless boot
+
+The module parameter can be used to test more easily enabling seamless
+boot support on additional ASICs.
+
+Reviewed-by: Harry Wentland <harry.wentland@amd.com>
+Signed-off-by: Mario Limonciello <mario.limonciello@amd.com>
+(cherry picked from commit e999fcc311fa2cc2bc16f346cfbf09bd6ef7f4d0)
+---
+ drivers/gpu/drm/amd/amdgpu/amdgpu.h        |  1 +
+ drivers/gpu/drm/amd/amdgpu/amdgpu_device.c | 20 +++++++++++++++++---
+ drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c    |  8 ++++++++
+ 3 files changed, 26 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu.h b/drivers/gpu/drm/amd/amdgpu/amdgpu.h
+index 15fdf30b220da..5744fc5320a41 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu.h
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu.h
+@@ -244,6 +244,7 @@ extern int amdgpu_num_kcq;
+ #define AMDGPU_VCNFW_LOG_SIZE (32 * 1024)
+ extern int amdgpu_vcnfw_log;
+ extern int amdgpu_sg_display;
++extern int amdgpu_seamless;
+ 
+ extern int amdgpu_user_partt_mode;
+ 
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+index 2f83d7d420b12..d652232079705 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+@@ -1496,11 +1496,25 @@ bool amdgpu_sg_display_supported(struct amdgpu_device *adev)
+  */
+ bool amdgpu_device_seamless_boot_supported(struct amdgpu_device *adev)
+ {
++	switch (amdgpu_seamless) {
++	case -1:
++		break;
++	case 1:
++		return true;
++	case 0:
++		return false;
++	default:
++		DRM_ERROR("Invalid value for amdgpu.seamless: %d\n",
++			  amdgpu_seamless);
++		return false;
++	}
++
++	if (adev->mman.keep_stolen_vga_memory)
++		return false;
++
+ 	switch (adev->ip_versions[DCE_HWIP][0]) {
+ 	case IP_VERSION(3, 0, 1):
+-		if (!adev->mman.keep_stolen_vga_memory)
+-			return true;
+-		break;
++		return true;
+ 	default:
+ 		break;
+ 	}
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
+index e06009966428f..45f95db73f7ed 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_drv.c
+@@ -195,6 +195,7 @@ int amdgpu_use_xgmi_p2p = 1;
+ int amdgpu_vcnfw_log;
+ int amdgpu_sg_display = -1; /* auto */
+ int amdgpu_user_partt_mode = AMDGPU_AUTO_COMPUTE_PARTITION_MODE;
++int amdgpu_seamless = -1; /* auto */
+ 
+ static void amdgpu_drv_delayed_reset_work_handler(struct work_struct *work);
+ 
+@@ -981,6 +982,13 @@ module_param_named(user_partt_mode, amdgpu_user_partt_mode, uint, 0444);
+ module_param(enforce_isolation, bool, 0444);
+ MODULE_PARM_DESC(enforce_isolation, "enforce process isolation between graphics and compute . enforce_isolation = on");
+ 
++/**
++ * DOC: seamless (int)
++ * Seamless boot will keep the image on the screen during the boot process.
++ */
++MODULE_PARM_DESC(seamless, "Seamless boot (-1 = auto (default), 0 = disable, 1 = enable)");
++module_param_named(seamless, amdgpu_seamless, int, 0444);
++
+ /* These devices are not supported by amdgpu.
+  * They are supported by the mach64, r128, radeon drivers
+  */
+-- 
+2.41.0
+
+
+From 4aa5f8423baa3ea67144e0369cf88aee870480ea Mon Sep 17 00:00:00 2001
+From: Mario Limonciello <mario.limonciello@amd.com>
+Date: Tue, 5 Sep 2023 14:26:00 -0500
+Subject: [PATCH 4/5] drm/amd: Enable seamless boot by default on newer ASICs
+
+Seamless boot can technically be supported as far back as DCN1
+but to avoid regressions on older hardware, enable it for DCN3 and
+later.
+
+If users report using the module parameter that it works on older
+ASICs as well, this can be adjusted.
+
+Reviewed-by: Harry Wentland <harry.wentland@amd.com>
+Signed-off-by: Mario Limonciello <mario.limonciello@amd.com>
+(cherry picked from commit f98d7840b8ac7b9f65a2327fc39990dba102098f)
+---
+ drivers/gpu/drm/amd/amdgpu/amdgpu_device.c | 15 ++++-----------
+ 1 file changed, 4 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+index d652232079705..09afc6411e45e 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+@@ -1490,9 +1490,9 @@ bool amdgpu_sg_display_supported(struct amdgpu_device *adev)
+ /*
+  * Check whether seamless boot is supported.
+  *
+- * So far we only support seamless boot on select ASICs.
+- * If everything goes well, we may consider expanding
+- * seamless boot to other ASICs.
++ * So far we only support seamless boot on DCE 3.0 or later.
++ * If users report that it works on older ASICS as well, we may
++ * loosen this.
+  */
+ bool amdgpu_device_seamless_boot_supported(struct amdgpu_device *adev)
+ {
+@@ -1512,14 +1512,7 @@ bool amdgpu_device_seamless_boot_supported(struct amdgpu_device *adev)
+ 	if (adev->mman.keep_stolen_vga_memory)
+ 		return false;
+ 
+-	switch (adev->ip_versions[DCE_HWIP][0]) {
+-	case IP_VERSION(3, 0, 1):
+-		return true;
+-	default:
+-		break;
+-	}
+-
+-	return false;
++	return adev->ip_versions[DCE_HWIP][0] >= IP_VERSION(3, 0, 0);
+ }
+ 
+ /*
+-- 
+2.41.0
+
+
+From 84971bcf8ec5a4aef2ee67efeb86cdd9c96e301b Mon Sep 17 00:00:00 2001
+From: bouhaa <boukehaarsma23@gmail.com>
+Date: Wed, 20 Sep 2023 22:11:55 +0200
+Subject: [PATCH 5/5] drm/amd: Enable seamless boot by default on DCN1.0 or
+ newer
+
+---
+ drivers/gpu/drm/amd/amdgpu/amdgpu_device.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+index 09afc6411e45e..2ee743df148da 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_device.c
+@@ -1490,7 +1490,7 @@ bool amdgpu_sg_display_supported(struct amdgpu_device *adev)
+ /*
+  * Check whether seamless boot is supported.
+  *
+- * So far we only support seamless boot on DCE 3.0 or later.
++ * So far we only support seamless boot on DCE 1.0 or later.
+  * If users report that it works on older ASICS as well, we may
+  * loosen this.
+  */
+@@ -1512,7 +1512,7 @@ bool amdgpu_device_seamless_boot_supported(struct amdgpu_device *adev)
+ 	if (adev->mman.keep_stolen_vga_memory)
+ 		return false;
+ 
+-	return adev->ip_versions[DCE_HWIP][0] >= IP_VERSION(3, 0, 0);
++	return adev->ip_versions[DCE_HWIP][0] >= IP_VERSION(1, 0, 0);
+ }
+ 
+ /*
+-- 
+2.41.0
+
